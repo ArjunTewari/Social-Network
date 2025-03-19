@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { ObjectId } from "mongodb"
 import clientPromise from "@/lib/mongodb"
 import { auth } from "@/lib/auth"
+import { z } from "zod"
 
 // GET posts
 export async function GET(req: Request) {
@@ -31,7 +32,13 @@ export async function GET(req: Request) {
             from: "likes",
             let: { postId: "$_id" },
             pipeline: [
-              { $match: { $expr: { $eq: ["$postId", "$$postId"] } } },
+              { 
+                $match: { 
+                  $expr: { 
+                    $eq: ["$postId", { $toObjectId: "$$postId" }] 
+                  } 
+                } 
+              },
             ],
             as: "likes",
           },
@@ -41,7 +48,13 @@ export async function GET(req: Request) {
             from: "comments",
             let: { postId: "$_id" },
             pipeline: [
-              { $match: { $expr: { $eq: ["$postId", "$$postId"] } } },
+              { 
+                $match: { 
+                  $expr: { 
+                    $eq: ["$postId", { $toObjectId: "$$postId" }] 
+                  } 
+                } 
+              },
             ],
             as: "comments",
           },
@@ -86,7 +99,11 @@ export async function GET(req: Request) {
   }
 }
 
-// Create post
+const createPostSchema = z.object({
+  image: z.string().url(),
+  caption: z.string().max(2200).optional(),
+})
+
 export async function POST(req: Request) {
   try {
     const session = await auth()
@@ -94,14 +111,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { content, image } = await req.json()
-
-    if (!content && !image) {
-      return NextResponse.json(
-        { error: "Content or image is required" },
-        { status: 400 }
-      )
-    }
+    const json = await req.json()
+    const body = createPostSchema.parse(json)
 
     const client = await clientPromise
     const db = client.db()
@@ -109,8 +120,8 @@ export async function POST(req: Request) {
     // Create post
     const result = await db.collection("posts").insertOne({
       userId: new ObjectId(session.user.id),
-      content,
-      image,
+      image: body.image,
+      caption: body.caption,
       createdAt: new Date(),
       updatedAt: new Date(),
     })
@@ -121,43 +132,29 @@ export async function POST(req: Request) {
       { $inc: { postsCount: 1 } }
     )
 
-    // Fetch the created post with user details
-    const [post] = await db
-      .collection("posts")
-      .aggregate([
-        { $match: { _id: result.insertedId } },
-        {
-          $lookup: {
-            from: "users",
-            localField: "userId",
-            foreignField: "_id",
-            as: "user",
-          },
-        },
-        { $unwind: "$user" },
-        {
-          $project: {
-            _id: 1,
-            content: 1,
-            image: 1,
-            createdAt: 1,
-            likesCount: 0,
-            commentsCount: 0,
-            isLiked: false,
-            user: {
-              _id: 1,
-              name: 1,
-              username: 1,
-              image: 1,
-            },
-          },
-        },
-      ])
-      .toArray()
+    // Create activity
+    await db.collection("activities").insertOne({
+      userId: new ObjectId(session.user.id),
+      type: "post",
+      postId: result.insertedId,
+      message: "created a new post",
+      createdAt: new Date(),
+    })
 
-    return NextResponse.json(post, { status: 201 })
+    return NextResponse.json({
+      _id: result.insertedId,
+      ...body,
+    })
   } catch (error) {
     console.error("Error creating post:", error)
+
+    if (error instanceof z.ZodError) {
+      return NextResponse.json(
+        { error: error.errors[0].message },
+        { status: 400 }
+      )
+    }
+
     return NextResponse.json(
       { error: "Failed to create post" },
       { status: 500 }

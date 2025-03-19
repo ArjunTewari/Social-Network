@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { notFound } from "next/navigation"
+import { notFound, useParams } from "next/navigation"
 import Image from "next/image"
 import { useSession } from "next-auth/react"
 import useSWR, { Fetcher } from "swr"
@@ -70,13 +70,29 @@ function ProfileSkeleton() {
   )
 }
 
-export default function ProfilePage({ params }: { params: { id: string } }) {
+export default function ProfilePage() {
+  const params = useParams()
+  const userId = params?.id as string
   const { data: session } = useSession()
   const { toast } = useToast()
   const { data: profile, error, mutate } = useSWR<Profile>(
-    `/api/users/${params.id}`,
-    fetcher
+    session && userId ? `/api/users/${userId}` : null,
+    fetcher,
+    {
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false
+    }
   )
+
+  useEffect(() => {
+    if (error) {
+      toast({
+        title: "Error",
+        description: "Failed to load profile",
+        variant: "destructive",
+      })
+    }
+  }, [error, toast])
 
   const handleFollow = async () => {
     if (!session || !profile) return
@@ -118,16 +134,7 @@ export default function ProfilePage({ params }: { params: { id: string } }) {
     }
   }
 
-  if (error) {
-    toast({
-      title: "Error",
-      description: "Failed to load profile",
-      variant: "destructive",
-    })
-    return <ProfileSkeleton />
-  }
-
-  if (!profile) {
+  if (error || !profile) {
     return <ProfileSkeleton />
   }
 

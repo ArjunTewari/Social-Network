@@ -145,6 +145,7 @@ export function CreatePost() {
                       accept="image/*"
                       className="hidden"
                       onChange={handleImageChange}
+                      aria-label="Upload image"
                     />
                     <p className="mt-2 text-xs text-muted-foreground">PNG, JPG, GIF up to 10MB</p>
                   </div>

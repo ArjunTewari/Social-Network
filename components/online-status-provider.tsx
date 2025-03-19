@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
 import { useRouter, usePathname } from "next/navigation"
 import { useSession } from "next-auth/react"
 
@@ -10,34 +10,39 @@ export function OnlineStatusProvider({ children }: { children: React.ReactNode }
   const [isOnline, setIsOnline] = useState(true)
   const router = useRouter()
   const pathname = usePathname()
+  const lastUpdateRef = useRef<number>(Date.now())
+
+  const setOnlineStatus = useCallback(async (status: boolean) => {
+    if (!session?.user?.id) return;
+    
+    // Prevent too frequent updates (minimum 5 seconds between updates)
+    const now = Date.now()
+    if (now - lastUpdateRef.current < 5000) return;
+    lastUpdateRef.current = now;
+
+    try {
+      const response = await fetch("/api/users/online", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ status }),
+      })
+
+      if (!response.ok) {
+        console.warn("Failed to update online status:", await response.text())
+      }
+    } catch (error) {
+      console.warn("Error updating online status:", error)
+    }
+  }, [session?.user?.id])
 
   useEffect(() => {
-    if (!session || status !== "authenticated") {
-      return // Don't track online status for unauthenticated users
-    }
-
-    const setOnlineStatus = async (status: boolean) => {
-      try {
-        const response = await fetch("/api/users/online", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ status }),
-        })
-
-        if (!response.ok) {
-          throw new Error("Failed to update online status")
-        }
-      } catch (error) {
-        // Silently handle the error - don't break the app for online status failures
-        console.warn("Error updating online status:", error)
-      }
-    }
+    if (!session || status !== "authenticated") return;
 
     // Set initial online status
     setIsOnline(true)
-    setOnlineStatus(true)
+    const initialUpdate = setOnlineStatus(true)
 
     // Handle visibility change
     const handleVisibilityChange = () => {
@@ -54,24 +59,21 @@ export function OnlineStatusProvider({ children }: { children: React.ReactNode }
     document.addEventListener("visibilitychange", handleVisibilityChange)
     window.addEventListener("beforeunload", handleBeforeUnload)
 
-    // Periodic update (every minute)
+    // Periodic update (every 30 seconds if the page is visible)
     const intervalId = setInterval(() => {
       if (document.visibilityState === "visible") {
         setOnlineStatus(true)
       }
-    }, 60000)
+    }, 30000)
 
-    // Cleanup
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange)
       window.removeEventListener("beforeunload", handleBeforeUnload)
       clearInterval(intervalId)
-      if (session) {
-        setOnlineStatus(false)
-      }
+      setOnlineStatus(false)
     }
-  }, [session, status])
+  }, [session, status, setOnlineStatus])
 
-  return <>{children}</>
+  return children
 }
 
